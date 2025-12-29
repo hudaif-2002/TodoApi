@@ -8,9 +8,9 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// Configure Database
+// Configure Database - CHANGED TO POSTGRESQL
 builder.Services.AddDbContext<TodoDbContext>(options =>
-    options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 var app = builder.Build();
 
@@ -33,7 +33,8 @@ app.MapControllers();
 // Simple root endpoint
 app.MapGet("/", () => new 
 {
-    message = "TodoApi is running!",
+    message = "TodoApi is running with PostgreSQL!",
+    database = "Supabase PostgreSQL",
     endpoints = new 
     {
         getAllTodos = "/api/todos",
