@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using TodoApi.Data;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -8,23 +8,20 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// Configure Database - Convert Railway DATABASE_URL to Npgsql format
+// SMART DATABASE CONFIGURATION - Works with ANY provider!
 builder.Services.AddDbContext<TodoDbContext>(options =>
 {
-    var connectionString = Environment.GetEnvironmentVariable("DATABASE_URL");
+    var (provider, connectionString, source) = GetDatabaseConfig(builder.Configuration);
     
-    if (!string.IsNullOrEmpty(connectionString) && connectionString.StartsWith("postgresql://"))
+    if (provider == "SQLite")
     {
-        // Railway provides URI format, convert to Npgsql key-value format
-        var uri = new Uri(connectionString);
-        var npgsqlConnectionString = $"Host={uri.Host};Port={uri.Port};Database={uri.AbsolutePath.TrimStart('/')};Username={uri.UserInfo.Split(':')[0]};Password={uri.UserInfo.Split(':')[1]};SSL Mode=Prefer;Trust Server Certificate=true";
-        options.UseNpgsql(npgsqlConnectionString);
+        options.UseSqlite(connectionString);
+        Console.WriteLine($"Using SQLite database: {connectionString}");
     }
     else
     {
-        // Fallback to appsettings.json (Supabase for local testing)
-        connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
         options.UseNpgsql(connectionString);
+        Console.WriteLine($"Using PostgreSQL from {source}");
     }
 });
 
@@ -48,19 +45,92 @@ app.UseAuthorization();
 app.MapControllers();
 
 // Root endpoint
-app.MapGet("/", () => new
+app.MapGet("/", (IConfiguration config) => 
 {
-    message = "TodoApi is running with PostgreSQL!",
-    database = "Railway PostgreSQL",
-    endpoints = new[]
+    var (provider, _, source) = GetDatabaseConfig(config);
+    return new
     {
-        "GET /api/todos - Get all todos",
-        "GET /api/todos/{id} - Get todo by ID",
-        "POST /api/todos - Create new todo",
-        "PUT /api/todos/{id} - Update todo",
-        "DELETE /api/todos/{id} - Delete todo"
-    },
-    swagger = "/swagger"
+        message = "TodoApi is running!",
+        database = provider,
+        source = source,
+        environment = app.Environment.EnvironmentName,
+        endpoints = new[]
+        {
+            "GET /api/todos - Get all todos",
+            "GET /api/todos/{id} - Get todo by ID",
+            "POST /api/todos - Create new todo",
+            "PUT /api/todos/{id} - Update todo",
+            "DELETE /api/todos/{id} - Delete todo"
+        },
+        swagger = "/swagger"
+    };
 });
 
 app.Run();
+
+// SMART DATABASE CONFIGURATION RESOLVER - Plug and Play!
+static (string provider, string connectionString, string source) GetDatabaseConfig(IConfiguration configuration)
+{
+    // Priority 1: Railway DATABASE_URL (automatic in production)
+    var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
+    if (!string.IsNullOrEmpty(databaseUrl))
+    {
+        return ("PostgreSQL", ConvertUriToNpgsql(databaseUrl), "Railway");
+    }
+    
+    // Priority 2: Check DatabaseProvider setting
+    var configuredProvider = configuration["DatabaseProvider"];
+    
+    if (configuredProvider == "SQLite")
+    {
+        var sqliteConnection = configuration.GetConnectionString("SQLite") ?? "Data Source=todoapi.db";
+        return ("SQLite", sqliteConnection, "Local File");
+    }
+    
+    // Priority 3: PostgreSQL - check which source
+    var databaseSource = configuration["DatabaseSource"] ?? "Local";
+    var postgresConnection = configuration.GetConnectionString(databaseSource);
+    
+    if (!string.IsNullOrEmpty(postgresConnection))
+    {
+        // Check if it's URI format (Neon, Supabase, Render provide this)
+        if (postgresConnection.StartsWith("postgresql://") || postgresConnection.StartsWith("postgres://"))
+        {
+            return ("PostgreSQL", ConvertUriToNpgsql(postgresConnection), databaseSource);
+        }
+        return ("PostgreSQL", postgresConnection, databaseSource); // Already in Npgsql format
+    }
+    
+    // Default: SQLite for local development
+    return ("SQLite", "Data Source=todoapi.db", "Local File");
+}
+
+// Convert PostgreSQL URI to Npgsql key-value format
+static string ConvertUriToNpgsql(string uriString)
+{
+    // Remove query parameters for parsing
+    var uriWithoutQuery = uriString.Split('?')[0];
+    var uri = new Uri(uriWithoutQuery);
+    var userInfo = uri.UserInfo.Split(':');
+    
+    // Default to port 5432 if not specified
+    var port = uri.Port > 0 ? uri.Port : 5432;
+    
+    var connectionString = $"Host={uri.Host};Port={port};Database={uri.AbsolutePath.TrimStart('/')};Username={userInfo[0]};Password={userInfo[1]}";
+    
+    // Add SSL mode from query string if present
+    if (uriString.Contains("sslmode=require"))
+    {
+        connectionString += ";SSL Mode=Require";
+    }
+    else
+    {
+        connectionString += ";SSL Mode=Prefer";
+    }
+    
+    connectionString += ";Trust Server Certificate=true";
+    
+    return connectionString;
+}
+
+
