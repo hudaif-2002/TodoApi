@@ -8,12 +8,24 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// Configure Database - Use Railway DATABASE_URL or fallback to appsettings
+// Configure Database - Convert Railway DATABASE_URL to Npgsql format
 builder.Services.AddDbContext<TodoDbContext>(options =>
 {
-    var connectionString = Environment.GetEnvironmentVariable("DATABASE_URL") 
-        ?? builder.Configuration.GetConnectionString("DefaultConnection");
-    options.UseNpgsql(connectionString);
+    var connectionString = Environment.GetEnvironmentVariable("DATABASE_URL");
+    
+    if (!string.IsNullOrEmpty(connectionString) && connectionString.StartsWith("postgresql://"))
+    {
+        // Railway provides URI format, convert to Npgsql key-value format
+        var uri = new Uri(connectionString);
+        var npgsqlConnectionString = $"Host={uri.Host};Port={uri.Port};Database={uri.AbsolutePath.TrimStart('/')};Username={uri.UserInfo.Split(':')[0]};Password={uri.UserInfo.Split(':')[1]};SSL Mode=Prefer;Trust Server Certificate=true";
+        options.UseNpgsql(npgsqlConnectionString);
+    }
+    else
+    {
+        // Fallback to appsettings.json (Supabase for local testing)
+        connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+        options.UseNpgsql(connectionString);
+    }
 });
 
 var app = builder.Build();
@@ -39,7 +51,7 @@ app.MapControllers();
 app.MapGet("/", () => new
 {
     message = "TodoApi is running with PostgreSQL!",
-    database = "Railway PostgreSQL (or Supabase fallback)",
+    database = "Railway PostgreSQL",
     endpoints = new[]
     {
         "GET /api/todos - Get all todos",
