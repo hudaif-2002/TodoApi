@@ -8,9 +8,13 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// Configure Database - CHANGED TO POSTGRESQL
+// Configure Database - Use Railway DATABASE_URL or fallback to appsettings
 builder.Services.AddDbContext<TodoDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+{
+    var connectionString = Environment.GetEnvironmentVariable("DATABASE_URL") 
+        ?? builder.Configuration.GetConnectionString("DefaultConnection");
+    options.UseNpgsql(connectionString);
+});
 
 var app = builder.Build();
 
@@ -28,26 +32,23 @@ if (app.Environment.IsDevelopment() || app.Environment.IsProduction())
     app.UseSwaggerUI();
 }
 
+app.UseAuthorization();
 app.MapControllers();
 
-// Simple root endpoint
-app.MapGet("/", () => new 
+// Root endpoint
+app.MapGet("/", () => new
 {
     message = "TodoApi is running with PostgreSQL!",
-    database = "Supabase PostgreSQL",
-    endpoints = new 
+    database = "Railway PostgreSQL (or Supabase fallback)",
+    endpoints = new[]
     {
-        getAllTodos = "/api/todos",
-        getTodo = "/api/todos/{id}",
-        createTodo = "POST /api/todos",
-        updateTodo = "PUT /api/todos/{id}",
-        deleteTodo = "DELETE /api/todos/{id}",
-        swagger = "/swagger"
-    }
+        "GET /api/todos - Get all todos",
+        "GET /api/todos/{id} - Get todo by ID",
+        "POST /api/todos - Create new todo",
+        "PUT /api/todos/{id} - Update todo",
+        "DELETE /api/todos/{id} - Delete todo"
+    },
+    swagger = "/swagger"
 });
-
-// Listen on PORT environment variable (for Railway/Render)
-var port = Environment.GetEnvironmentVariable("PORT") ?? "5000";
-app.Urls.Add($"http://0.0.0.0:{port}");
 
 app.Run();
