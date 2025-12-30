@@ -2,14 +2,11 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TodoApi.Data;
 using TodoApi.Models;
-using Microsoft.AspNetCore.Authorization;
-using System.Security.Claims;
 
 namespace TodoApi.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize] // NEW: Require authentication for all endpoints
 public class TodosController : ControllerBase
 {
     private readonly TodoDbContext _context;
@@ -21,35 +18,18 @@ public class TodosController : ControllerBase
         _logger = logger;
     }
 
-    // Helper method to get current user ID from JWT token
-    private int GetCurrentUserId()
-    {
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
-                         ?? User.FindFirst("sub")?.Value;
-        return int.Parse(userIdClaim!);
-    }
-
     [HttpGet]
     public async Task<ActionResult<IEnumerable<TodoItem>>> GetTodos()
     {
-        var userId = GetCurrentUserId();
-        _logger.LogInformation("Getting todos for user {UserId}", userId);
-        
-        // Only return todos for the authenticated user
-        return await _context.TodoItems
-            .Where(t => t.UserId == userId)
-            .ToListAsync();
+        _logger.LogInformation("Getting all todos");
+        return await _context.TodoItems.ToListAsync();
     }
 
     [HttpGet("{id}")]
     public async Task<ActionResult<TodoItem>> GetTodo(int id)
     {
-        var userId = GetCurrentUserId();
-        _logger.LogInformation("Getting todo {Id} for user {UserId}", id, userId);
-        
-        var todo = await _context.TodoItems
-            .FirstOrDefaultAsync(t => t.Id == id && t.UserId == userId);
-            
+        _logger.LogInformation("Getting todo with id {Id}", id);
+        var todo = await _context.TodoItems.FindAsync(id);
         if (todo == null)
         {
             return NotFound(new { message = $"Todo with id {id} not found" });
@@ -60,16 +40,10 @@ public class TodosController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<TodoItem>> CreateTodo(TodoItem todo)
     {
-        var userId = GetCurrentUserId();
-        _logger.LogInformation("Creating todo for user {UserId}: {Title}", userId, todo.Title);
-        
-        // Set the user ID from authenticated user
-        todo.UserId = userId;
+        _logger.LogInformation("Creating new todo: {Title}", todo.Title);
         todo.CreatedAt = DateTime.UtcNow;
-        
         _context.TodoItems.Add(todo);
         await _context.SaveChangesAsync();
-        
         return CreatedAtAction(nameof(GetTodo), new { id = todo.Id }, todo);
     }
 
@@ -80,20 +54,14 @@ public class TodosController : ControllerBase
         {
             return BadRequest(new { message = "ID mismatch" });
         }
-        
-        var userId = GetCurrentUserId();
-        var existingTodo = await _context.TodoItems
-            .FirstOrDefaultAsync(t => t.Id == id && t.UserId == userId);
-            
+        var existingTodo = await _context.TodoItems.FindAsync(id);
         if (existingTodo == null)
         {
             return NotFound(new { message = $"Todo with id {id} not found" });
         }
-        
         existingTodo.Title = todo.Title;
         existingTodo.Description = todo.Description;
         existingTodo.IsCompleted = todo.IsCompleted;
-        
         if (todo.IsCompleted && existingTodo.CompletedAt == null)
         {
             existingTodo.CompletedAt = DateTime.UtcNow;
@@ -102,7 +70,6 @@ public class TodosController : ControllerBase
         {
             existingTodo.CompletedAt = null;
         }
-        
         await _context.SaveChangesAsync();
         return NoContent();
     }
@@ -110,18 +77,13 @@ public class TodosController : ControllerBase
     [HttpDelete("{id}")]
     public async Task<IActionResult> DeleteTodo(int id)
     {
-        var userId = GetCurrentUserId();
-        var todo = await _context.TodoItems
-            .FirstOrDefaultAsync(t => t.Id == id && t.UserId == userId);
-            
+        var todo = await _context.TodoItems.FindAsync(id);
         if (todo == null)
         {
             return NotFound(new { message = $"Todo with id {id} not found" });
         }
-        
         _context.TodoItems.Remove(todo);
         await _context.SaveChangesAsync();
-        
         return NoContent();
     }
 }

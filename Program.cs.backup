@@ -1,50 +1,12 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using TodoApi.Data;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.IdentityModel.Tokens;
-using Microsoft.OpenApi.Models;
-using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen(c =>
-{
-    c.SwaggerDoc("v1", new OpenApiInfo 
-    { 
-        Title = "TodoApi", 
-        Version = "v1",
-        Description = "Secured TodoApi with JWT Authentication"
-    });
-    
-    // Add JWT Authentication to Swagger
-    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
-    {
-        Description = "JWT Authorization header using the Bearer scheme. Enter your JWT token below.",
-        Name = "Authorization",
-        In = ParameterLocation.Header,
-        Type = SecuritySchemeType.Http,
-        Scheme = "bearer",
-        BearerFormat = "JWT"
-    });
-    
-    c.AddSecurityRequirement(new OpenApiSecurityRequirement
-    {
-        {
-            new OpenApiSecurityScheme
-            {
-                Reference = new OpenApiReference
-                {
-                    Type = ReferenceType.SecurityScheme,
-                    Id = "Bearer"
-                }
-            },
-            new string[] {}
-        }
-    });
-});
+builder.Services.AddSwaggerGen();
 
 // Add CORS
 builder.Services.AddCors(options =>
@@ -57,34 +19,11 @@ builder.Services.AddCors(options =>
     });
 });
 
-// NEW: Add JWT Authentication
-var jwtKey = builder.Configuration["Jwt:Key"] 
-    ?? throw new InvalidOperationException("JWT Key not configured");
-var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "AuthService";
-var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "TodoApp";
-
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
-    {
-        options.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuer = true,
-            ValidateAudience = true,
-            ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
-            ValidIssuer = jwtIssuer,
-            ValidAudience = jwtAudience,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
-        };
-    });
-
-builder.Services.AddAuthorization();
-
 // SMART DATABASE CONFIGURATION - Works with ANY provider!
 builder.Services.AddDbContext<TodoDbContext>(options =>
 {
     var (provider, connectionString, source) = GetDatabaseConfig(builder.Configuration);
-
+    
     if (provider == "SQLite")
     {
         options.UseSqlite(connectionString);
@@ -103,18 +42,7 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<TodoDbContext>();
-    try
-    {
-        // Try to add UserId column if it doesn't exist
-        db.Database.ExecuteSqlRaw("ALTER TABLE \"TodoItems\" ADD COLUMN IF NOT EXISTS \"UserId\" INTEGER NOT NULL DEFAULT 1");
-        Console.WriteLine("Added UserId column to TodoItems table");
-    }
-    catch
-    {
-        // If table doesn't exist, create it
-        db.Database.EnsureCreated();
-        Console.WriteLine("Created database tables");
-    }
+    db.Database.EnsureCreated();
 }
 
 // Configure middleware
@@ -125,36 +53,28 @@ if (app.Environment.IsDevelopment() || app.Environment.IsProduction())
 }
 
 app.UseCors("AllowBlazorApp");
-
-// NEW: Add authentication & authorization middleware (ORDER MATTERS!)
-app.UseAuthentication();
 app.UseAuthorization();
-
 app.MapControllers();
 
-// Root endpoint (no authentication required)
-app.MapGet("/", (IConfiguration config) =>
+// Root endpoint
+app.MapGet("/", (IConfiguration config) => 
 {
     var (provider, _, source) = GetDatabaseConfig(config);
     return new
     {
-        message = "TodoApi with JWT Authentication",
-        version = "2.0 - Secured",
+        message = "TodoApi is running!",
         database = provider,
         source = source,
         environment = app.Environment.EnvironmentName,
-        authentication = "JWT Bearer Token Required",
         endpoints = new[]
         {
-            "POST /auth/login - Get JWT token from AuthService first!",
-            "GET /api/todos - Get all todos (requires auth)",
-            "GET /api/todos/{id} - Get todo by ID (requires auth)",
-            "POST /api/todos - Create new todo (requires auth)",
-            "PUT /api/todos/{id} - Update todo (requires auth)",
-            "DELETE /api/todos/{id} - Delete todo (requires auth)"
+            "GET /api/todos - Get all todos",
+            "GET /api/todos/{id} - Get todo by ID",
+            "POST /api/todos - Create new todo",
+            "PUT /api/todos/{id} - Update todo",
+            "DELETE /api/todos/{id} - Delete todo"
         },
-        swagger = "/swagger",
-        authServiceUrl = "https://authservice-production-4a60.up.railway.app"
+        swagger = "/swagger"
     };
 });
 
@@ -169,30 +89,30 @@ static (string provider, string connectionString, string source) GetDatabaseConf
     {
         return ("PostgreSQL", ConvertUriToNpgsql(databaseUrl), "Railway");
     }
-
+    
     // Priority 2: Check DatabaseProvider setting
     var configuredProvider = configuration["DatabaseProvider"];
-
+    
     if (configuredProvider == "SQLite")
     {
         var sqliteConnection = configuration.GetConnectionString("SQLite") ?? "Data Source=todoapi.db";
         return ("SQLite", sqliteConnection, "Local File");
     }
-
+    
     // Priority 3: PostgreSQL - check which source
     var databaseSource = configuration["DatabaseSource"] ?? "Local";
     var postgresConnection = configuration.GetConnectionString(databaseSource);
-
+    
     if (!string.IsNullOrEmpty(postgresConnection))
     {
-        // Check if it is URI format (Neon, Supabase, Render provide this)
+        // Check if it's URI format (Neon, Supabase, Render provide this)
         if (postgresConnection.StartsWith("postgresql://") || postgresConnection.StartsWith("postgres://"))
         {
             return ("PostgreSQL", ConvertUriToNpgsql(postgresConnection), databaseSource);
         }
         return ("PostgreSQL", postgresConnection, databaseSource); // Already in Npgsql format
     }
-
+    
     // Default: SQLite for local development
     return ("SQLite", "Data Source=todoapi.db", "Local File");
 }
@@ -204,12 +124,12 @@ static string ConvertUriToNpgsql(string uriString)
     var uriWithoutQuery = uriString.Split('?')[0];
     var uri = new Uri(uriWithoutQuery);
     var userInfo = uri.UserInfo.Split(':');
-
+    
     // Default to port 5432 if not specified
     var port = uri.Port > 0 ? uri.Port : 5432;
-
+    
     var connectionString = $"Host={uri.Host};Port={port};Database={uri.AbsolutePath.TrimStart('/')};Username={userInfo[0]};Password={userInfo[1]}";
-
+    
     // Add SSL mode from query string if present
     if (uriString.Contains("sslmode=require"))
     {
@@ -219,11 +139,10 @@ static string ConvertUriToNpgsql(string uriString)
     {
         connectionString += ";SSL Mode=Prefer";
     }
-
+    
     connectionString += ";Trust Server Certificate=true";
-
+    
     return connectionString;
 }
-
 
 
